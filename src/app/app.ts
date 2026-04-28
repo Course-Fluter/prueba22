@@ -12,5 +12,5 @@ import { RouterOutlet } from '@angular/router';
   styles: [],
 })
 export class App {
-  readonly title = signal('template-angular');
+  readonly title = signal('Prueba 2');
 }
