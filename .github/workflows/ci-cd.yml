@@ -1,0 +1,71 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+
+  build:
+    name: Build
+    runs-on: [self-hosted, org-shared]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci --include=dev
+      - name: Build
+        run: ./node_modules/@angular/cli/bin/ng.js build
+  test:
+    name: Test
+    runs-on: [self-hosted, org-shared]
+    timeout-minutes: 20
+    env:
+      CHROME_BIN: /usr/bin/google-chrome
+    needs: build
+    steps:
+      - uses: actions/checkout@v5
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci --include=dev
+      - name: Run tests
+        run: npm test
+  deploy:
+    name: Deploy
+    runs-on: [self-hosted, org-shared]
+    needs: ["build", "test"]
+    if: github.ref == 'refs/heads/main'
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Deploy
+        run: |
+          set -euo pipefail
+          APP_NAME="${GITHUB_REPOSITORY##*/}"
+          IMAGE_NAME="$APP_NAME:latest"
+          CONTAINER_NAME="$APP_NAME"
+          PORT_START=5550
+          PORT_END=5599
+          PORT=$(APP_NAME="$APP_NAME" PORT_START="$PORT_START" PORT_END="$PORT_END" node -e 'const name=process.env.APP_NAME||""; const start=Number(process.env.PORT_START||5550); const end=Number(process.env.PORT_END||5599); const range=end-start+1; let hash=0; for (let i=0;i<name.length;i++){ hash=((hash*31)+name.charCodeAt(i))>>>0; } process.stdout.write(String(start + (hash % range)));')
+
+          docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+          if ss -ltn "( sport = :$PORT )" | grep -q ":$PORT"; then
+            echo "El puerto $PORT ya esta ocupado por otro proceso. Libera el puerto o cambia el rango configurado." >&2
+            exit 1
+          fi
+
+          docker build -t "$IMAGE_NAME" .
+          docker run -d --name "$CONTAINER_NAME" -p "$PORT:80" "$IMAGE_NAME"
+
+          HOST_IP=$(hostname -I | awk '{print $1}')
+          echo "Deploy completado: http://$HOST_IP:$PORT"
